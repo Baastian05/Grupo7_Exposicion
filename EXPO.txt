@@ -1,0 +1,220 @@
+EXPO
+   EJERCICIO PRÁCTICO: TRIGGERS Y CURSORES EN ORACLE
+   Caso: Sistema de Inventario y Ventas
+
+   TRIGGER:
+   - Se activa automáticamente al registrar una venta.
+   - Actualiza el stock del producto.
+   - Guarda el cambio en una tabla de auditoría.
+
+   CURSOR:
+   - Recorre los productos uno por uno.
+   - Calcula el valor total del inventario.
+========================================================= */
+
+---------------------------------------------------------
+-- 1. CREACIÓN DE TABLAS
+---------------------------------------------------------
+
+-- Tabla de productos
+CREATE TABLE productos (
+    id_producto NUMBER PRIMARY KEY,
+    nombre VARCHAR2(50),
+    stock NUMBER,
+    precio NUMBER(10,2)
+);
+
+-- Tabla de ventas
+CREATE TABLE ventas (
+    id_venta NUMBER PRIMARY KEY,
+    id_producto NUMBER,
+    cantidad NUMBER,
+    fecha_venta DATE,
+    CONSTRAINT fk_producto
+        FOREIGN KEY (id_producto)
+        REFERENCES productos(id_producto)
+);
+
+-- Tabla para registrar cambios de stock
+CREATE TABLE auditoria_stock (
+    id_auditoria NUMBER PRIMARY KEY,
+    id_producto NUMBER,
+    stock_anterior NUMBER,
+    stock_nuevo NUMBER,
+    fecha_cambio DATE
+);
+
+---------------------------------------------------------
+-- 2. SECUENCIA
+---------------------------------------------------------
+
+-- Genera automáticamente el ID de auditoría
+CREATE SEQUENCE auditoria_stock_seq
+START WITH 1
+INCREMENT BY 1;
+
+---------------------------------------------------------
+-- 3. DATOS DE PRUEBA
+---------------------------------------------------------
+
+INSERT INTO productos VALUES (1, 'Laptop', 10, 800);
+INSERT INTO productos VALUES (2, 'Mouse', 20, 15);
+INSERT INTO productos VALUES (3, 'Teclado', 15, 25);
+
+COMMIT;
+
+---------------------------------------------------------
+-- 4. TRIGGER
+---------------------------------------------------------
+
+/*
+   Este trigger se ejecuta automáticamente
+   después de insertar una venta.
+
+   Funciones:
+   1. Obtiene el stock actual.
+   2. Descuenta la cantidad vendida.
+   3. Guarda el cambio en auditoría.
+*/
+
+CREATE OR REPLACE TRIGGER trg_actualizar_stock
+AFTER INSERT ON ventas
+FOR EACH ROW
+
+DECLARE
+    v_stock_anterior NUMBER;
+
+BEGIN
+
+    -- Obtener stock actual del producto
+    SELECT stock
+    INTO v_stock_anterior
+    FROM productos
+    WHERE id_producto = :NEW.id_producto;
+
+    -- Descontar la cantidad vendida
+    UPDATE productos
+    SET stock = stock - :NEW.cantidad
+    WHERE id_producto = :NEW.id_producto;
+
+    -- Guardar registro de auditoría
+    INSERT INTO auditoria_stock (
+        id_auditoria,
+        id_producto,
+        stock_anterior,
+        stock_nuevo,
+        fecha_cambio
+    )
+    VALUES (
+        auditoria_stock_seq.NEXTVAL,
+        :NEW.id_producto,
+        v_stock_anterior,
+        v_stock_anterior - :NEW.cantidad,
+        SYSDATE
+    );
+
+END;
+/
+
+---------------------------------------------------------
+-- 5. PRUEBA DEL TRIGGER
+---------------------------------------------------------
+
+/*
+   Al ejecutar este INSERT:
+
+   Antes:
+   Laptop = 10 unidades
+
+   Venta:
+   2 unidades
+
+   Después:
+   Laptop = 8 unidades
+
+   Además se registra el cambio
+   en la tabla auditoria_stock.
+*/
+
+INSERT INTO ventas
+VALUES (1, 1, 2, SYSDATE);
+
+COMMIT;
+
+---------------------------------------------------------
+-- VERIFICAR RESULTADOS
+---------------------------------------------------------
+
+-- Ver stock actualizado
+SELECT * FROM productos;
+
+-- Ver auditoría generada por el trigger
+SELECT * FROM auditoria_stock;
+
+---------------------------------------------------------
+-- 6. CURSOR
+---------------------------------------------------------
+
+/*
+   Este cursor recorre todos los productos.
+
+   Para cada producto calcula:
+
+   stock × precio
+
+   y finalmente obtiene el valor total
+   del inventario.
+*/
+
+SET SERVEROUTPUT ON;
+
+DECLARE
+
+    -- Cursor que obtiene todos los productos
+    CURSOR c_productos IS
+        SELECT nombre, stock, precio
+        FROM productos;
+
+    -- Variables para almacenar cada fila
+    v_nombre productos.nombre%TYPE;
+    v_stock productos.stock%TYPE;
+    v_precio productos.precio%TYPE;
+
+    -- Acumulador del valor total
+    v_total NUMBER := 0;
+
+BEGIN
+
+    -- Abrir cursor
+    OPEN c_productos;
+
+    LOOP
+
+        -- Obtener una fila del cursor
+        FETCH c_productos
+        INTO v_nombre, v_stock, v_precio;
+
+        -- Salir cuando no existan más registros
+        EXIT WHEN c_productos%NOTFOUND;
+
+        -- Mostrar valor de cada producto
+        DBMS_OUTPUT.PUT_LINE(
+            'Producto: ' || v_nombre ||
+            ' | Valor: ' || (v_stock * v_precio)
+        );
+
+        -- Acumular total del inventario
+        v_total := v_total + (v_stock * v_precio);
+
+    END LOOP;
+
+    -- Cerrar cursor
+    CLOSE c_productos;
+
+    -- Mostrar total calculado
+    DBMS_OUTPUT.PUT_LINE(
+        'TOTAL INVENTARIO: ' || v_total
+    );
+
+END;
+/
